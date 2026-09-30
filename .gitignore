@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.wrangler/
+.env*
+!.env.example
+.dev.vars*
+.agents/
+.codex/
+.aws/
+.DS_Store
+playwright-report/
+test-results/
+api/public/docs-assets/
+/.publish/

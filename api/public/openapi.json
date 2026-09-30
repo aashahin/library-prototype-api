@@ -1,0 +1,2465 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Maktabah Arabic Demo API",
+    "version": "1.0.0",
+    "description": "Build an Arabic library app with public JSON, matching cover images, and original reading samples. This Hono API runs on Cloudflare Workers and supplies the [live Maktabah prototype](https://maktabah-prototype.pages.dev). The catalog contains 12 fictional books in 4 categories, each with 3 sample chapters. Authors, ratings, and full-book page counts are illustrative; full ebook downloads are not available.\n\nNo API key or authentication is required. Requests are read-only: use GET, with HEAD and CORS preflight OPTIONS also supported. Successful API responses contain `data` and `meta`; errors contain `error` and `meta`. Arabic text is UTF-8 and should be rendered RTL. Books include an absolute `coverUrl` suitable for Flutter `Image.network`.\n\nStart with `GET /api/v1/home`, list categories with `GET /api/v1/categories`, then explore `GET /api/v1/books`. Search examples below use Arabic text and category IDs. Read `/api/v1/books/light/chapters/0` for a complete sample chapter. Chapter indexes start at 0; display numbers start at 1.\n\n```sh\ncurl --get 'https://maktabah-demo-api.ashahin.workers.dev/api/v1/books' --data-urlencode 'q=الضوء' --data-urlencode 'category=literature' --data-urlencode 'limit=6'\n```\n\nFor Flutter, add `http` with `flutter pub add http`. This short example fetches Arabic JSON from the public API; the reusable client in `api/examples/maktabah_api.dart` adds typed catalog pagination, timeouts, and envelope/error checks.\n\n```dart\nimport 'dart:convert';\nimport 'package:http/http.dart' as http;\n\nFuture<void> main() async {\n  final uri = Uri.https(\n    'maktabah-demo-api.ashahin.workers.dev',\n    '/api/v1/books',\n    {'q': 'الضوء', 'category': 'literature', 'limit': '6'},\n  );\n  final response = await http.get(uri).timeout(const Duration(seconds: 15));\n  final body = jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;\n  if (response.statusCode != 200) throw Exception(body['error']);\n  final books = body['data'] as List<dynamic>;\n  print('Found ${books.length} books.');\n}\n```\n\nSaved books, reading positions, bookmarks, and preferences belong in per-device local storage. Import `/api/v1/demo-state` once when initializing a new store; subsequent fetches must preserve the user's local state. There are no mutation endpoints or server-side user records.\n\nAll `/api/v1` endpoints reject unknown or duplicate query keys. Searches with no matches and pages beyond the last page return 200 with an empty array. Unknown resources return 404; invalid queries/indexes return 400; unsupported methods return 405. Trailing slashes are accepted. The [raw OpenAPI contract](https://maktabah-demo-api.ashahin.workers.dev/openapi.json) is available separately from this interactive reference."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "The origin serving this document (local or deployed Worker)."
+    }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "operationId": "getApiDirectory",
+        "summary": "API directory and links",
+        "description": "Returns origin-aware API, interactive documentation, and raw OpenAPI contract URLs. This endpoint ignores query parameters.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful request.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Successful JSON responses: public, max-age=300. Errors: no-store."
+              },
+              "Content-Language": {
+                "schema": {
+                  "type": "string",
+                  "const": "ar"
+                }
+              },
+              "Access-Control-Allow-Origin": {
+                "schema": {
+                  "type": "string",
+                  "const": "*"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoryResponse"
+                },
+                "examples": {
+                  "directory": {
+                    "summary": "API directory",
+                    "value": {
+                      "data": {
+                        "name": "مكتبة — واجهة تجريبية عامة",
+                        "description": "كتب ومؤلفون تخيليون ونصوص عربية أصلية لتجربة تطبيق المكتبة.",
+                        "baseUrl": "https://maktabah-demo-api.ashahin.workers.dev/api/v1",
+                        "documentationUrl": "https://maktabah-demo-api.ashahin.workers.dev/docs",
+                        "openapiUrl": "https://maktabah-demo-api.ashahin.workers.dev/openapi.json",
+                        "endpoints": [
+                          "/health",
+                          "/api/v1/home",
+                          "/api/v1/categories",
+                          "/api/v1/books",
+                          "/api/v1/books/{bookId}",
+                          "/api/v1/books/{bookId}/chapters",
+                          "/api/v1/books/{bookId}/chapters/{index}",
+                          "/api/v1/demo-state"
+                        ],
+                        "stateStorage": "client"
+                      },
+                      "meta": {
+                        "apiVersion": "v1",
+                        "language": "ar",
+                        "direction": "rtl",
+                        "isDemo": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "tags": [
+          "Discovery"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Check the Worker and catalog version",
+        "description": "This endpoint ignores query parameters.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful request.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Successful JSON responses: public, max-age=300. Errors: no-store."
+              },
+              "Content-Language": {
+                "schema": {
+                  "type": "string",
+                  "const": "ar"
+                }
+              },
+              "Access-Control-Allow-Origin": {
+                "schema": {
+                  "type": "string",
+                  "const": "*"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                },
+                "examples": {
+                  "healthy": {
+                    "summary": "Healthy catalog",
+                    "value": {
+                      "data": {
+                        "status": "ok",
+                        "catalogVersion": 1
+                      },
+                      "meta": {
+                        "apiVersion": "v1",
+                        "language": "ar",
+                        "direction": "rtl",
+                        "isDemo": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "tags": [
+          "Discovery"
+        ]
+      }
+    },
+    "/api/v1/categories": {
+      "get": {
+        "operationId": "getCategories",
+        "summary": "List the four real categories and total catalog counts",
+        "description": "Only documented query keys are accepted; duplicate keys are rejected. Unsupported/invalid query values return 400. No query parameters are accepted. The all filter is not a category object.",
+        "responses": {
+          "200": {
+            "description": "Successful request.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Successful JSON responses: public, max-age=300. Errors: no-store."
+              },
+              "Content-Language": {
+                "schema": {
+                  "type": "string",
+                  "const": "ar"
+                }
+              },
+              "Access-Control-Allow-Origin": {
+                "schema": {
+                  "type": "string",
+                  "const": "*"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CategoriesResponse"
+                },
+                "examples": {
+                  "categories": {
+                    "summary": "Four Arabic categories",
+                    "value": {
+                      "data": [
+                        {
+                          "id": "literature",
+                          "name": "أدب وروايات",
+                          "icon": "feather",
+                          "bookCount": 3
+                        },
+                        {
+                          "id": "self-development",
+                          "name": "تطوير الذات",
+                          "icon": "sprout",
+                          "bookCount": 3
+                        },
+                        {
+                          "id": "history",
+                          "name": "تاريخ وحضارة",
+                          "icon": "history",
+                          "bookCount": 3
+                        },
+                        {
+                          "id": "science",
+                          "name": "علوم ومعرفة",
+                          "icon": "science",
+                          "bookCount": 3
+                        }
+                      ],
+                      "meta": {
+                        "apiVersion": "v1",
+                        "language": "ar",
+                        "direction": "rtl",
+                        "isDemo": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadQuery"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [],
+        "tags": [
+          "Catalog"
+        ]
+      }
+    },
+    "/api/v1/books": {
+      "get": {
+        "operationId": "getBooks",
+        "summary": "Search, filter, sort, and paginate books",
+        "description": "Only documented query keys are accepted; duplicate keys are rejected. Unsupported/invalid query values return 400. Empty matches and pages beyond totalPages return 200 with data: []; totalPages is 0 when there are no matches.",
+        "responses": {
+          "200": {
+            "description": "Successful request.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Successful JSON responses: public, max-age=300. Errors: no-store."
+              },
+              "Content-Language": {
+                "schema": {
+                  "type": "string",
+                  "const": "ar"
+                }
+              },
+              "Access-Control-Allow-Origin": {
+                "schema": {
+                  "type": "string",
+                  "const": "*"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BooksResponse"
+                },
+                "examples": {
+                  "arabicSearch": {
+                    "summary": "Arabic search in literature",
+                    "value": {
+                      "data": [
+                        {
+                          "id": "light",
+                          "title": "أثر الضوء",
+                          "author": "ليلى مراد",
+                          "categoryId": "literature",
+                          "rating": 4.8,
+                          "pageCount": 216,
+                          "language": "ar",
+                          "description": "في بيت قديم تحيط به الأشجار، تعثر سلمى على دفتر لا يحمل اسمًا. وبين صفحاته، تكتشف حكايات صغيرة عن الضوء الذي نتركه في حياة الآخرين، وعن الأشياء التي تنمو في صمت.",
+                          "tagline": "حكايات تُزهر في الذاكرة",
+                          "categoryName": "أدب وروايات",
+                          "coverUrl": "https://maktabah-demo-api.ashahin.workers.dev/images/light.png",
+                          "coverWidth": 600,
+                          "coverHeight": 855,
+                          "coverBackgroundColor": "#e5e4cf",
+                          "chapterCount": 3,
+                          "direction": "rtl",
+                          "isFictional": true,
+                          "contentType": "sample"
+                        }
+                      ],
+                      "meta": {
+                        "apiVersion": "v1",
+                        "language": "ar",
+                        "direction": "rtl",
+                        "isDemo": true,
+                        "pagination": {
+                          "page": 1,
+                          "limit": 6,
+                          "total": 1,
+                          "totalPages": 1,
+                          "hasNextPage": false,
+                          "hasPreviousPage": false
+                        },
+                        "filters": {
+                          "q": "الضوء",
+                          "category": "literature",
+                          "sort": "catalog"
+                        }
+                      }
+                    }
+                  },
+                  "emptySearch": {
+                    "summary": "No matches (200, empty data)",
+                    "value": {
+                      "data": [],
+                      "meta": {
+                        "apiVersion": "v1",
+                        "language": "ar",
+                        "direction": "rtl",
+                        "isDemo": true,
+                        "pagination": {
+                          "page": 1,
+                          "limit": 12,
+                          "total": 0,
+                          "totalPages": 0,
+                          "hasNextPage": false,
+                          "hasPreviousPage": false
+                        },
+                        "filters": {
+                          "q": "no-matching-book",
+                          "category": "all",
+                          "sort": "catalog"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadQuery"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Substring search across title, author, description, and category name. Arabic diacritics/tatweel are removed, alef variants map to ا, ى maps to ي, and whitespace is collapsed. Validation uses a maximum of 200 UTF-16 code units. Response filters.q retains the original query.",
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "default": ""
+            },
+            "example": "الضوء"
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "description": "Filter by category ID. Each query key must appear at most once.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "literature",
+                "self-development",
+                "history",
+                "science"
+              ],
+              "default": "all"
+            },
+            "example": "literature"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "description": "Canonical positive decimal integer: no leading zero, sign, decimal point, exponent, or surrounding whitespace.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "default": 1
+            },
+            "example": 1
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Canonical positive decimal integer from 1 to 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 12
+            },
+            "example": 6
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "catalog preserves fixture order; title is ascending Arabic collation; rating is descending with catalog-order ties.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "catalog",
+                "title",
+                "rating"
+              ],
+              "default": "catalog"
+            },
+            "example": "catalog"
+          }
+        ],
+        "tags": [
+          "Catalog"
+        ]
+      }
+    },
+    "/api/v1/books/{bookId}": {
+      "get": {
+        "operationId": "getBook",
+        "summary": "Get a book and its available chapter summaries",
+        "description": "Only documented query keys are accepted; duplicate keys are rejected. Unsupported/invalid query values return 400. No query parameters are accepted.",
+        "responses": {
+          "200": {
+            "description": "Successful request.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Successful JSON responses: public, max-age=300. Errors: no-store."
+              },
+              "Content-Language": {
+                "schema": {
+                  "type": "string",
+                  "const": "ar"
+                }
+              },
+              "Access-Control-Allow-Origin": {
+                "schema": {
+                  "type": "string",
+                  "const": "*"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookDetailResponse"
+                },
+                "examples": {
+                  "light": {
+                    "summary": "أثر الضوء with chapter summaries",
+                    "value": {
+                      "data": {
+                        "id": "light",
+                        "title": "أثر الضوء",
+                        "author": "ليلى مراد",
+                        "categoryId": "literature",
+                        "rating": 4.8,
+                        "pageCount": 216,
+                        "language": "ar",
+                        "description": "في بيت قديم تحيط به الأشجار، تعثر سلمى على دفتر لا يحمل اسمًا. وبين صفحاته، تكتشف حكايات صغيرة عن الضوء الذي نتركه في حياة الآخرين، وعن الأشياء التي تنمو في صمت.",
+                        "tagline": "حكايات تُزهر في الذاكرة",
+                        "categoryName": "أدب وروايات",
+                        "coverUrl": "https://maktabah-demo-api.ashahin.workers.dev/images/light.png",
+                        "coverWidth": 600,
+                        "coverHeight": 855,
+                        "coverBackgroundColor": "#e5e4cf",
+                        "chapterCount": 3,
+                        "direction": "rtl",
+                        "isFictional": true,
+                        "contentType": "sample",
+                        "chapters": [
+                          {
+                            "index": 0,
+                            "number": 1,
+                            "title": "البداية التي نختارها",
+                            "paragraphCount": 4
+                          },
+                          {
+                            "index": 1,
+                            "number": 2,
+                            "title": "في التفاصيل حياة",
+                            "paragraphCount": 4
+                          },
+                          {
+                            "index": 2,
+                            "number": 3,
+                            "title": "ما يبقى معنا",
+                            "paragraphCount": 4
+                          }
+                        ],
+                        "notice": "كتاب ومؤلف تخيليان؛ الصفحات والتقييم توضيحيان، والمتاح للقراءة مقتطف من ثلاثة فصول."
+                      },
+                      "meta": {
+                        "apiVersion": "v1",
+                        "language": "ar",
+                        "direction": "rtl",
+                        "isDemo": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadQuery"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "bookId",
+            "in": "path",
+            "required": true,
+            "description": "Stable book ID from the catalog. Unknown IDs return 404.",
+            "schema": {
+              "type": "string",
+              "example": "light"
+            },
+            "example": "light"
+          }
+        ],
+        "tags": [
+          "Catalog"
+        ]
+      }
+    },
+    "/api/v1/books/{bookId}/chapters": {
+      "get": {
+        "operationId": "getChapters",
+        "summary": "List chapter summaries",
+        "description": "Only documented query keys are accepted; duplicate keys are rejected. Unsupported/invalid query values return 400. No query parameters are accepted. Chapter index is zero-based; display number is one-based.",
+        "responses": {
+          "200": {
+            "description": "Successful request.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Successful JSON responses: public, max-age=300. Errors: no-store."
+              },
+              "Content-Language": {
+                "schema": {
+                  "type": "string",
+                  "const": "ar"
+                }
+              },
+              "Access-Control-Allow-Origin": {
+                "schema": {
+                  "type": "string",
+                  "const": "*"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChaptersResponse"
+                },
+                "examples": {
+                  "lightChapters": {
+                    "summary": "Three sample chapter summaries",
+                    "value": {
+                      "data": [
+                        {
+                          "index": 0,
+                          "number": 1,
+                          "title": "البداية التي نختارها",
+                          "paragraphCount": 4
+                        },
+                        {
+                          "index": 1,
+                          "number": 2,
+                          "title": "في التفاصيل حياة",
+                          "paragraphCount": 4
+                        },
+                        {
+                          "index": 2,
+                          "number": 3,
+                          "title": "ما يبقى معنا",
+                          "paragraphCount": 4
+                        }
+                      ],
+                      "meta": {
+                        "apiVersion": "v1",
+                        "language": "ar",
+                        "direction": "rtl",
+                        "isDemo": true,
+                        "bookId": "light"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadQuery"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "bookId",
+            "in": "path",
+            "required": true,
+            "description": "Stable book ID from the catalog. Unknown IDs return 404.",
+            "schema": {
+              "type": "string",
+              "example": "light"
+            },
+            "example": "light"
+          }
+        ],
+        "tags": [
+          "Reading"
+        ]
+      }
+    },
+    "/api/v1/books/{bookId}/chapters/{index}": {
+      "get": {
+        "operationId": "getChapter",
+        "summary": "Read one sample chapter",
+        "description": "Only documented query keys are accepted; duplicate keys are rejected. Unsupported/invalid query values return 400. No query parameters are accepted. Three short original sample chapters are provided; full ebook files are not available.",
+        "responses": {
+          "200": {
+            "description": "Successful request.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Successful JSON responses: public, max-age=300. Errors: no-store."
+              },
+              "Content-Language": {
+                "schema": {
+                  "type": "string",
+                  "const": "ar"
+                }
+              },
+              "Access-Control-Allow-Origin": {
+                "schema": {
+                  "type": "string",
+                  "const": "*"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChapterResponse"
+                },
+                "examples": {
+                  "firstChapter": {
+                    "summary": "First sample chapter (index 0)",
+                    "value": {
+                      "data": {
+                        "index": 0,
+                        "title": "البداية التي نختارها",
+                        "paragraphs": [
+                          "حين فتحت سلمى النافذة، لم يكن في الحديقة شيء جديد. شجرة الليمون في مكانها، والمقعد الخشبي ينتظر كعادته. لكن خيط الضوء الذي عبر الزجاج هذه المرة بدا لها كأنه رسالة وصلت متأخرة، ووجدت أخيرًا من يقرؤها.",
+                          "عند ترتيب الرف القريب من النافذة، وجدت سلمى دفترًا أخضر خلف صندوق الصور. لم يحمل غلافه اسمًا، لكن الصفحة الأولى وصفت شجرة الليمون والمقعد نفسه، كما لو أن البيت بدأ يروي حكايته.",
+                          "قرأت عن امرأة كانت تترك طبقًا من الثمار عند الباب كل خميس. وفي الهامش، رُسمت ورقة صغيرة إلى جانب عبارة تقول إن الهدية لا تحتاج دائمًا إلى مناسبة.",
+                          "حملت سلمى الدفتر إلى الحديقة، وجلست حيث ينتهي خيط الضوء. قررت أن تقرأ صفحة واحدة كل صباح، وأن تترك ما تجده فيها يرافقها طوال اليوم."
+                        ],
+                        "bookId": "light",
+                        "number": 1,
+                        "chapterCount": 3,
+                        "previousChapterIndex": null,
+                        "nextChapterIndex": 1
+                      },
+                      "meta": {
+                        "apiVersion": "v1",
+                        "language": "ar",
+                        "direction": "rtl",
+                        "isDemo": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_QUERY for rejected query parameters or INVALID_CHAPTER_INDEX for a malformed/unsafe chapter index.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Successful JSON responses: public, max-age=300. Errors: no-store."
+              },
+              "Content-Language": {
+                "schema": {
+                  "type": "string",
+                  "const": "ar"
+                }
+              },
+              "Access-Control-Allow-Origin": {
+                "schema": {
+                  "type": "string",
+                  "const": "*"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "examples": {
+                  "malformedIndex": {
+                    "summary": "Chapter index must be a canonical decimal integer",
+                    "value": {
+                      "error": {
+                        "code": "INVALID_CHAPTER_INDEX",
+                        "message": "معرّف الفصل عدد صحيح يبدأ من الصفر."
+                      },
+                      "meta": {
+                        "apiVersion": "v1",
+                        "language": "ar",
+                        "direction": "rtl",
+                        "isDemo": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "bookId",
+            "in": "path",
+            "required": true,
+            "description": "Stable book ID from the catalog. Unknown IDs return 404.",
+            "schema": {
+              "type": "string",
+              "example": "light"
+            },
+            "example": "light"
+          },
+          {
+            "name": "index",
+            "in": "path",
+            "required": true,
+            "description": "Zero-based canonical nonnegative decimal safe integer. Available indexes are currently 0, 1, 2. Malformed/unsafe integer is 400; unavailable index is 404. An unknown book takes precedence and returns 404.",
+            "schema": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "example": "0"
+            },
+            "example": "0"
+          }
+        ],
+        "tags": [
+          "Reading"
+        ]
+      }
+    },
+    "/api/v1/home": {
+      "get": {
+        "operationId": "getHome",
+        "summary": "Get prototype home-screen content",
+        "description": "Only documented query keys are accepted; duplicate keys are rejected. Unsupported/invalid query values return 400. category filters only featuredBooks. Hero books, category counts, and demoContinueReading stay unchanged. Continue-reading is a static seed; the Flutter app should build its tile from local state after initialization.",
+        "responses": {
+          "200": {
+            "description": "Successful request.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Successful JSON responses: public, max-age=300. Errors: no-store."
+              },
+              "Content-Language": {
+                "schema": {
+                  "type": "string",
+                  "const": "ar"
+                }
+              },
+              "Access-Control-Allow-Origin": {
+                "schema": {
+                  "type": "string",
+                  "const": "*"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeResponse"
+                },
+                "examples": {
+                  "literatureHome": {
+                    "summary": "Home with literature recommendations",
+                    "value": {
+                      "data": {
+                        "welcomeTitle": "ماذا ستقرأ اليوم؟",
+                        "welcomeSubtitle": "صفحة جديدة، وعالم آخر ينتظرك.",
+                        "quote": {
+                          "text": "بعض الكتب لا نُنهيها، بل نبدأ بها حكاية جديدة.",
+                          "attribution": "من وحي مكتبة"
+                        },
+                        "hero": {
+                          "eyebrow": "مساحة لفضولك",
+                          "title": "حكايتك تبدأ بصفحة.",
+                          "actionLabel": "استكشف الكتب",
+                          "books": [
+                            {
+                              "id": "slow",
+                              "title": "على مهل",
+                              "author": "نور إبراهيم",
+                              "categoryId": "self-development",
+                              "rating": 4.6,
+                              "pageCount": 160,
+                              "language": "ar",
+                              "description": "تأملات بسيطة في استعادة الانتباه لما حولنا. كتاب يدعوك إلى بداية أقل استعجالًا، وإلى بناء عادات صغيرة تمنح يومك مساحة للتنفس.",
+                              "tagline": "مساحة أوسع للحياة",
+                              "categoryName": "تطوير الذات",
+                              "coverUrl": "https://maktabah-demo-api.ashahin.workers.dev/images/slow.png",
+                              "coverWidth": 600,
+                              "coverHeight": 855,
+                              "coverBackgroundColor": "#e7dcc7",
+                              "chapterCount": 3,
+                              "direction": "rtl",
+                              "isFictional": true,
+                              "contentType": "sample"
+                            },
+                            {
+                              "id": "sea",
+                              "title": "رسائل إلى البحر",
+                              "author": "يوسف عادل",
+                              "categoryId": "literature",
+                              "rating": 4.7,
+                              "pageCount": 184,
+                              "language": "ar",
+                              "description": "رسائل لم تُرسل، ومدينة تتكئ على البحر. رحلة أدبية دافئة عن المسافات التي تقرّبنا، والأماكن التي تحتفظ بأصواتنا حتى بعد أن نغادرها.",
+                              "tagline": "للحكايات مرافئ أخرى",
+                              "categoryName": "أدب وروايات",
+                              "coverUrl": "https://maktabah-demo-api.ashahin.workers.dev/images/sea.png",
+                              "coverWidth": 600,
+                              "coverHeight": 855,
+                              "coverBackgroundColor": "#254b53",
+                              "chapterCount": 3,
+                              "direction": "rtl",
+                              "isFictional": true,
+                              "contentType": "sample"
+                            },
+                            {
+                              "id": "light",
+                              "title": "أثر الضوء",
+                              "author": "ليلى مراد",
+                              "categoryId": "literature",
+                              "rating": 4.8,
+                              "pageCount": 216,
+                              "language": "ar",
+                              "description": "في بيت قديم تحيط به الأشجار، تعثر سلمى على دفتر لا يحمل اسمًا. وبين صفحاته، تكتشف حكايات صغيرة عن الضوء الذي نتركه في حياة الآخرين، وعن الأشياء التي تنمو في صمت.",
+                              "tagline": "حكايات تُزهر في الذاكرة",
+                              "categoryName": "أدب وروايات",
+                              "coverUrl": "https://maktabah-demo-api.ashahin.workers.dev/images/light.png",
+                              "coverWidth": 600,
+                              "coverHeight": 855,
+                              "coverBackgroundColor": "#e5e4cf",
+                              "chapterCount": 3,
+                              "direction": "rtl",
+                              "isFictional": true,
+                              "contentType": "sample"
+                            }
+                          ]
+                        },
+                        "categories": [
+                          {
+                            "id": "literature",
+                            "name": "أدب وروايات",
+                            "icon": "feather",
+                            "bookCount": 3
+                          },
+                          {
+                            "id": "self-development",
+                            "name": "تطوير الذات",
+                            "icon": "sprout",
+                            "bookCount": 3
+                          },
+                          {
+                            "id": "history",
+                            "name": "تاريخ وحضارة",
+                            "icon": "history",
+                            "bookCount": 3
+                          },
+                          {
+                            "id": "science",
+                            "name": "علوم ومعرفة",
+                            "icon": "science",
+                            "bookCount": 3
+                          }
+                        ],
+                        "featuredBooks": [
+                          {
+                            "id": "light",
+                            "title": "أثر الضوء",
+                            "author": "ليلى مراد",
+                            "categoryId": "literature",
+                            "rating": 4.8,
+                            "pageCount": 216,
+                            "language": "ar",
+                            "description": "في بيت قديم تحيط به الأشجار، تعثر سلمى على دفتر لا يحمل اسمًا. وبين صفحاته، تكتشف حكايات صغيرة عن الضوء الذي نتركه في حياة الآخرين، وعن الأشياء التي تنمو في صمت.",
+                            "tagline": "حكايات تُزهر في الذاكرة",
+                            "categoryName": "أدب وروايات",
+                            "coverUrl": "https://maktabah-demo-api.ashahin.workers.dev/images/light.png",
+                            "coverWidth": 600,
+                            "coverHeight": 855,
+                            "coverBackgroundColor": "#e5e4cf",
+                            "chapterCount": 3,
+                            "direction": "rtl",
+                            "isFictional": true,
+                            "contentType": "sample"
+                          },
+                          {
+                            "id": "sea",
+                            "title": "رسائل إلى البحر",
+                            "author": "يوسف عادل",
+                            "categoryId": "literature",
+                            "rating": 4.7,
+                            "pageCount": 184,
+                            "language": "ar",
+                            "description": "رسائل لم تُرسل، ومدينة تتكئ على البحر. رحلة أدبية دافئة عن المسافات التي تقرّبنا، والأماكن التي تحتفظ بأصواتنا حتى بعد أن نغادرها.",
+                            "tagline": "للحكايات مرافئ أخرى",
+                            "categoryName": "أدب وروايات",
+                            "coverUrl": "https://maktabah-demo-api.ashahin.workers.dev/images/sea.png",
+                            "coverWidth": 600,
+                            "coverHeight": 855,
+                            "coverBackgroundColor": "#254b53",
+                            "chapterCount": 3,
+                            "direction": "rtl",
+                            "isFictional": true,
+                            "contentType": "sample"
+                          }
+                        ],
+                        "demoContinueReading": {
+                          "book": {
+                            "id": "beginnings",
+                            "title": "فن البدايات",
+                            "author": "سارة ياسين",
+                            "categoryId": "self-development",
+                            "rating": 4.9,
+                            "pageCount": 192,
+                            "language": "ar",
+                            "description": "ليس للبداية شكل واحد. عبر حكايات وتأملات قصيرة، يرافقك هذا الكتاب في اكتشاف قيمة الخطوة الأولى، وفي بناء علاقة ألطف مع الوقت والمحاولة.",
+                            "tagline": "خطوات صغيرة، آفاق جديدة",
+                            "categoryName": "تطوير الذات",
+                            "coverUrl": "https://maktabah-demo-api.ashahin.workers.dev/images/beginnings.png",
+                            "coverWidth": 600,
+                            "coverHeight": 855,
+                            "coverBackgroundColor": "#344c60",
+                            "chapterCount": 3,
+                            "direction": "rtl",
+                            "isFictional": true,
+                            "contentType": "sample"
+                          },
+                          "position": {
+                            "chapter": 0,
+                            "scroll": 0.96,
+                            "updatedAt": 0
+                          },
+                          "progressPercent": 32
+                        }
+                      },
+                      "meta": {
+                        "apiVersion": "v1",
+                        "language": "ar",
+                        "direction": "rtl",
+                        "isDemo": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadQuery"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "description": "Filter by category ID. Each query key must appear at most once.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "literature",
+                "self-development",
+                "history",
+                "science"
+              ],
+              "default": "all"
+            },
+            "example": "literature"
+          }
+        ],
+        "tags": [
+          "Home"
+        ]
+      }
+    },
+    "/api/v1/demo-state": {
+      "get": {
+        "operationId": "getDemoState",
+        "summary": "Get the optional initial local-state seed",
+        "description": "Only documented query keys are accepted; duplicate keys are rejected. Unsupported/invalid query values return 400. No query parameters are accepted. Import once into a new per-device local store; subsequent fetches must not reset user saves, reading positions, preferences, or bookmarks. There are no mutation endpoints, authentication, accounts, or server-side user state.",
+        "responses": {
+          "200": {
+            "description": "Successful request.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Successful JSON responses: public, max-age=300. Errors: no-store."
+              },
+              "Content-Language": {
+                "schema": {
+                  "type": "string",
+                  "const": "ar"
+                }
+              },
+              "Access-Control-Allow-Origin": {
+                "schema": {
+                  "type": "string",
+                  "const": "*"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoStateResponse"
+                },
+                "examples": {
+                  "initialSeed": {
+                    "summary": "Initial per-device local state",
+                    "value": {
+                      "data": {
+                        "saved": [
+                          "light",
+                          "slow",
+                          "beginnings"
+                        ],
+                        "progress": {
+                          "beginnings": {
+                            "chapter": 0,
+                            "scroll": 0.96,
+                            "updatedAt": 0
+                          }
+                        },
+                        "bookmarks": [],
+                        "preferences": {
+                          "fontSize": 21,
+                          "theme": "light"
+                        },
+                        "lastRead": "beginnings"
+                      },
+                      "meta": {
+                        "apiVersion": "v1",
+                        "language": "ar",
+                        "direction": "rtl",
+                        "isDemo": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadQuery"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [],
+        "tags": [
+          "Demo state"
+        ]
+      }
+    },
+    "/images/{file}": {
+      "get": {
+        "operationId": "getCoverImage",
+        "summary": "Get a generated book-cover PNG",
+        "description": "Public same-origin cover image. Use the coverUrl returned on a book. This endpoint ignores query parameters.",
+        "parameters": [
+          {
+            "name": "file",
+            "in": "path",
+            "required": true,
+            "description": "Exact allow-listed cover filename, including .png.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "light.png",
+                "sea.png",
+                "memory.png",
+                "slow.png",
+                "cosmos.png",
+                "beginnings.png",
+                "windows.png",
+                "andalus.png",
+                "nature.png",
+                "habits.png",
+                "time.png",
+                "caravan.png"
+              ]
+            },
+            "example": "light.png"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PNG book cover.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "public, max-age=86400"
+                }
+              }
+            },
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "tags": [
+          "Assets"
+        ]
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "getOpenApiDocument",
+        "summary": "Get this OpenAPI 3.1 document",
+        "description": "Raw OpenAPI JSON document; it is not wrapped in the API data/meta envelope. This endpoint ignores query parameters.",
+        "responses": {
+          "200": {
+            "description": "OpenAPI document.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Successful JSON responses: public, max-age=300. Errors: no-store."
+              },
+              "Content-Language": {
+                "schema": {
+                  "type": "string",
+                  "const": "ar"
+                }
+              },
+              "Access-Control-Allow-Origin": {
+                "schema": {
+                  "type": "string",
+                  "const": "*"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenApiDocument"
+                }
+              }
+            }
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "tags": [
+          "Contract"
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Meta": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "const": "v1",
+            "type": "string"
+          },
+          "language": {
+            "const": "ar",
+            "type": "string"
+          },
+          "direction": {
+            "const": "rtl",
+            "type": "string"
+          },
+          "isDemo": {
+            "const": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "language",
+          "direction",
+          "isDemo"
+        ],
+        "additionalProperties": false
+      },
+      "Pagination": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "totalPages": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hasNextPage": {
+            "type": "boolean"
+          },
+          "hasPreviousPage": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "page",
+          "limit",
+          "total",
+          "totalPages",
+          "hasNextPage",
+          "hasPreviousPage"
+        ],
+        "additionalProperties": false
+      },
+      "BookFilters": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "all",
+              "literature",
+              "self-development",
+              "history",
+              "science"
+            ]
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "catalog",
+              "title",
+              "rating"
+            ]
+          }
+        },
+        "required": [
+          "q",
+          "category",
+          "sort"
+        ],
+        "additionalProperties": false
+      },
+      "BooksMeta": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "const": "v1",
+            "type": "string"
+          },
+          "language": {
+            "const": "ar",
+            "type": "string"
+          },
+          "direction": {
+            "const": "rtl",
+            "type": "string"
+          },
+          "isDemo": {
+            "const": true,
+            "type": "boolean"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/Pagination"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/BookFilters"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "language",
+          "direction",
+          "isDemo",
+          "pagination",
+          "filters"
+        ],
+        "additionalProperties": false
+      },
+      "ChaptersMeta": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "const": "v1",
+            "type": "string"
+          },
+          "language": {
+            "const": "ar",
+            "type": "string"
+          },
+          "direction": {
+            "const": "rtl",
+            "type": "string"
+          },
+          "isDemo": {
+            "const": true,
+            "type": "boolean"
+          },
+          "bookId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "language",
+          "direction",
+          "isDemo",
+          "bookId"
+        ],
+        "additionalProperties": false
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "INVALID_QUERY",
+              "BOOK_NOT_FOUND",
+              "INVALID_CHAPTER_INDEX",
+              "CHAPTER_NOT_FOUND",
+              "IMAGE_NOT_FOUND",
+              "NOT_FOUND",
+              "METHOD_NOT_ALLOWED",
+              "INTERNAL_ERROR"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "Arabic error message."
+          },
+          "field": {
+            "type": "string",
+            "description": "Present for INVALID_QUERY."
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/Error"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "error",
+          "meta"
+        ],
+        "additionalProperties": false
+      },
+      "Category": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "literature",
+              "self-development",
+              "history",
+              "science"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "icon": {
+            "type": "string",
+            "description": "Symbol name for the client to map to an icon; not an image URL."
+          },
+          "bookCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "icon",
+          "bookCount"
+        ],
+        "additionalProperties": false
+      },
+      "Book": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable fictional book ID."
+          },
+          "title": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string",
+            "description": "Fictional author."
+          },
+          "categoryId": {
+            "type": "string",
+            "enum": [
+              "literature",
+              "self-development",
+              "history",
+              "science"
+            ]
+          },
+          "categoryName": {
+            "type": "string"
+          },
+          "rating": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 5,
+            "description": "Illustrative rating; not user reviews."
+          },
+          "pageCount": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Illustrative full-book page count, not the length of the available sample."
+          },
+          "language": {
+            "type": "string",
+            "const": "ar"
+          },
+          "description": {
+            "type": "string"
+          },
+          "tagline": {
+            "type": "string"
+          },
+          "coverUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Absolute same-origin PNG image URL, built from the request origin."
+          },
+          "coverWidth": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "coverHeight": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "coverBackgroundColor": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          },
+          "chapterCount": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Number of available sample chapters; currently 3 for every book."
+          },
+          "direction": {
+            "type": "string",
+            "const": "rtl"
+          },
+          "isFictional": {
+            "type": "boolean",
+            "const": true
+          },
+          "contentType": {
+            "type": "string",
+            "const": "sample"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "author",
+          "categoryId",
+          "categoryName",
+          "rating",
+          "pageCount",
+          "language",
+          "description",
+          "tagline",
+          "coverUrl",
+          "coverWidth",
+          "coverHeight",
+          "coverBackgroundColor",
+          "chapterCount",
+          "direction",
+          "isFictional",
+          "contentType"
+        ],
+        "additionalProperties": false
+      },
+      "ChapterSummary": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "title": {
+            "type": "string"
+          },
+          "paragraphCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "index",
+          "number",
+          "title",
+          "paragraphCount"
+        ],
+        "additionalProperties": false
+      },
+      "BookDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable fictional book ID."
+          },
+          "title": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string",
+            "description": "Fictional author."
+          },
+          "categoryId": {
+            "type": "string",
+            "enum": [
+              "literature",
+              "self-development",
+              "history",
+              "science"
+            ]
+          },
+          "categoryName": {
+            "type": "string"
+          },
+          "rating": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 5,
+            "description": "Illustrative rating; not user reviews."
+          },
+          "pageCount": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Illustrative full-book page count, not the length of the available sample."
+          },
+          "language": {
+            "type": "string",
+            "const": "ar"
+          },
+          "description": {
+            "type": "string"
+          },
+          "tagline": {
+            "type": "string"
+          },
+          "coverUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Absolute same-origin PNG image URL, built from the request origin."
+          },
+          "coverWidth": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "coverHeight": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "coverBackgroundColor": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          },
+          "chapterCount": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Number of available sample chapters; currently 3 for every book."
+          },
+          "direction": {
+            "type": "string",
+            "const": "rtl"
+          },
+          "isFictional": {
+            "type": "boolean",
+            "const": true
+          },
+          "contentType": {
+            "type": "string",
+            "const": "sample"
+          },
+          "chapters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChapterSummary"
+            }
+          },
+          "notice": {
+            "type": "string",
+            "description": "Arabic explanation that the book is fictional and the available text is a sample."
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "author",
+          "categoryId",
+          "categoryName",
+          "rating",
+          "pageCount",
+          "language",
+          "description",
+          "tagline",
+          "coverUrl",
+          "coverWidth",
+          "coverHeight",
+          "coverBackgroundColor",
+          "chapterCount",
+          "direction",
+          "isFictional",
+          "contentType",
+          "chapters",
+          "notice"
+        ],
+        "additionalProperties": false
+      },
+      "Chapter": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
+          },
+          "paragraphs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "bookId": {
+            "type": "string"
+          },
+          "number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "chapterCount": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "previousChapterIndex": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "nextChapterIndex": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        },
+        "required": [
+          "index",
+          "title",
+          "paragraphs",
+          "bookId",
+          "number",
+          "chapterCount",
+          "previousChapterIndex",
+          "nextChapterIndex"
+        ],
+        "additionalProperties": false
+      },
+      "ReadingPosition": {
+        "type": "object",
+        "properties": {
+          "chapter": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Zero-based chapter index."
+          },
+          "scroll": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Fractional position within the chapter, from 0 to 1."
+          },
+          "updatedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Milliseconds since Unix epoch for locally written state; 0 means the static demo seed has no real timestamp."
+          }
+        },
+        "required": [
+          "chapter",
+          "scroll",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "Bookmark": {
+        "type": "object",
+        "properties": {
+          "bookId": {
+            "type": "string"
+          },
+          "chapter": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "scroll": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "required": [
+          "bookId",
+          "chapter",
+          "scroll"
+        ],
+        "additionalProperties": false
+      },
+      "DemoState": {
+        "type": "object",
+        "properties": {
+          "saved": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "progress": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ReadingPosition"
+            },
+            "description": "Positions keyed by book ID. This is an immutable seed, not server storage."
+          },
+          "bookmarks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Bookmark"
+            }
+          },
+          "preferences": {
+            "type": "object",
+            "properties": {
+              "fontSize": {
+                "type": "number",
+                "minimum": 1
+              },
+              "theme": {
+                "type": "string",
+                "enum": [
+                  "light",
+                  "dark"
+                ]
+              }
+            },
+            "required": [
+              "fontSize",
+              "theme"
+            ],
+            "additionalProperties": false
+          },
+          "lastRead": {
+            "type": "string",
+            "description": "ID of the book selected for the seed continue-reading tile."
+          }
+        },
+        "required": [
+          "saved",
+          "progress",
+          "bookmarks",
+          "preferences",
+          "lastRead"
+        ],
+        "additionalProperties": false
+      },
+      "Home": {
+        "type": "object",
+        "properties": {
+          "welcomeTitle": {
+            "type": "string"
+          },
+          "welcomeSubtitle": {
+            "type": "string"
+          },
+          "hero": {
+            "type": "object",
+            "properties": {
+              "eyebrow": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "actionLabel": {
+                "type": "string"
+              },
+              "books": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Book"
+                }
+              }
+            },
+            "required": [
+              "eyebrow",
+              "title",
+              "actionLabel",
+              "books"
+            ],
+            "additionalProperties": false
+          },
+          "quote": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "attribution": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "attribution"
+            ],
+            "additionalProperties": false
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Category"
+            }
+          },
+          "featuredBooks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Book"
+            }
+          },
+          "demoContinueReading": {
+            "type": "object",
+            "properties": {
+              "book": {
+                "$ref": "#/components/schemas/Book"
+              },
+              "position": {
+                "$ref": "#/components/schemas/ReadingPosition"
+              },
+              "progressPercent": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "round((chapter + scroll) / chapterCount * 100). Seed is 32%."
+              }
+            },
+            "required": [
+              "book",
+              "position",
+              "progressPercent"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "welcomeTitle",
+          "welcomeSubtitle",
+          "hero",
+          "quote",
+          "categories",
+          "featuredBooks",
+          "demoContinueReading"
+        ],
+        "additionalProperties": false
+      },
+      "ApiDirectory": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "baseUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "documentationUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Absolute URL of the interactive Scalar API reference at /docs."
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "stateStorage": {
+            "type": "string",
+            "const": "client"
+          },
+          "openapiUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Absolute URL of the raw OpenAPI 3.1 JSON document at /openapi.json."
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "baseUrl",
+          "documentationUrl",
+          "endpoints",
+          "stateStorage",
+          "openapiUrl"
+        ],
+        "additionalProperties": false
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok"
+          },
+          "catalogVersion": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "status",
+          "catalogVersion"
+        ],
+        "additionalProperties": false
+      },
+      "OpenApiDocument": {
+        "type": "object",
+        "required": [
+          "openapi",
+          "info",
+          "paths"
+        ],
+        "properties": {
+          "openapi": {
+            "type": "string",
+            "const": "3.1.0"
+          },
+          "info": {
+            "type": "object"
+          },
+          "paths": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": true
+      },
+      "DirectoryResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ApiDirectory"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "additionalProperties": false
+      },
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Health"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "additionalProperties": false
+      },
+      "CategoriesResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Category"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "additionalProperties": false
+      },
+      "BooksResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Book"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/BooksMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "additionalProperties": false
+      },
+      "BookDetailResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/BookDetail"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "additionalProperties": false
+      },
+      "ChaptersResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChapterSummary"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ChaptersMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "additionalProperties": false
+      },
+      "ChapterResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Chapter"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "additionalProperties": false
+      },
+      "HomeResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Home"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "additionalProperties": false
+      },
+      "DemoStateResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DemoState"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "responses": {
+      "BadQuery": {
+        "description": "INVALID_QUERY: unknown/duplicate query key, invalid category, sort, pagination, or q longer than 200 UTF-16 code units. Error includes field.",
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string"
+            },
+            "description": "Successful JSON responses: public, max-age=300. Errors: no-store."
+          },
+          "Content-Language": {
+            "schema": {
+              "type": "string",
+              "const": "ar"
+            }
+          },
+          "Access-Control-Allow-Origin": {
+            "schema": {
+              "type": "string",
+              "const": "*"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "examples": {
+              "invalidLimit": {
+                "summary": "Limit above the maximum",
+                "value": {
+                  "error": {
+                    "code": "INVALID_QUERY",
+                    "message": "يجب أن تكون قيمة limit عددًا صحيحًا بين 1 و50.",
+                    "field": "limit"
+                  },
+                  "meta": {
+                    "apiVersion": "v1",
+                    "language": "ar",
+                    "direction": "rtl",
+                    "isDemo": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "BOOK_NOT_FOUND, CHAPTER_NOT_FOUND, IMAGE_NOT_FOUND, or NOT_FOUND, according to the requested resource.",
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string"
+            },
+            "description": "Successful JSON responses: public, max-age=300. Errors: no-store."
+          },
+          "Content-Language": {
+            "schema": {
+              "type": "string",
+              "const": "ar"
+            }
+          },
+          "Access-Control-Allow-Origin": {
+            "schema": {
+              "type": "string",
+              "const": "*"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "examples": {
+              "unknownBook": {
+                "summary": "Unknown book ID",
+                "value": {
+                  "error": {
+                    "code": "BOOK_NOT_FOUND",
+                    "message": "الكتاب غير موجود."
+                  },
+                  "meta": {
+                    "apiVersion": "v1",
+                    "language": "ar",
+                    "direction": "rtl",
+                    "isDemo": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "MethodNotAllowed": {
+        "description": "METHOD_NOT_ALLOWED: API resources are read-only.",
+        "headers": {
+          "Allow": {
+            "schema": {
+              "type": "string",
+              "const": "GET, HEAD, OPTIONS"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "examples": {
+              "readOnly": {
+                "summary": "Public API is read-only",
+                "value": {
+                  "error": {
+                    "code": "METHOD_NOT_ALLOWED",
+                    "message": "هذه واجهة للقراءة فقط؛ استخدم GET."
+                  },
+                  "meta": {
+                    "apiVersion": "v1",
+                    "language": "ar",
+                    "direction": "rtl",
+                    "isDemo": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "INTERNAL_ERROR: the request could not be completed.",
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string"
+            },
+            "description": "Successful JSON responses: public, max-age=300. Errors: no-store."
+          },
+          "Content-Language": {
+            "schema": {
+              "type": "string",
+              "const": "ar"
+            }
+          },
+          "Access-Control-Allow-Origin": {
+            "schema": {
+              "type": "string",
+              "const": "*"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Discovery",
+      "description": "API links and runtime health."
+    },
+    {
+      "name": "Home",
+      "description": "Prototype home-screen content and recommendations."
+    },
+    {
+      "name": "Catalog",
+      "description": "Categories, Arabic search, and book metadata."
+    },
+    {
+      "name": "Reading",
+      "description": "Chapter summaries and original sample text."
+    },
+    {
+      "name": "Demo state",
+      "description": "An optional initial seed for per-device local storage."
+    },
+    {
+      "name": "Assets",
+      "description": "Cover PNGs hosted with the API."
+    },
+    {
+      "name": "Contract",
+      "description": "The machine-readable OpenAPI document."
+    }
+  ]
+}
