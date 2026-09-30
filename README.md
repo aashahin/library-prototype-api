@@ -8,7 +8,6 @@ Built with **Hono**, **Cloudflare Workers**, **Bun**, and **Scalar**. The web pr
 
 | Resource | Link |
 | --- | --- |
-| App on GitHub Pages | [aashahin.github.io/maktabah](https://aashahin.github.io/maktabah/) |
 | App on Cloudflare Pages | [maktabah-prototype.pages.dev](https://maktabah-prototype.pages.dev) |
 | Interactive API reference | [Browse docs and try requests](https://maktabah-demo-api.ashahin.workers.dev/docs) |
 | Public API base | `https://maktabah-demo-api.ashahin.workers.dev/api/v1` |
@@ -72,10 +71,8 @@ Run these commands from `api/`:
 bun run check
 bun run smoke https://maktabah-demo-api.ashahin.workers.dev
 bun run docs:test https://maktabah-demo-api.ashahin.workers.dev
-bun run prototype:test https://aashahin.github.io/maktabah/
+bun run prototype:test https://maktabah-prototype.pages.dev
 ```
-
-The [GitHub Pages workflow](.github/workflows/pages.yml) publishes the prototype on every push to `main`. The Worker and Cloudflare Pages deployments are separate:
 
 ```sh
 bunx wrangler login
